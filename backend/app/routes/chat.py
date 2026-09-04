@@ -1,11 +1,16 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from openai import OpenAI
-from app.config import OPENAI_API_KEY
+from app.config import GROQ_API_KEY
 import base64, io, json, csv, tempfile, os
 
 router = APIRouter()
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+
+# Groq model IDs
+TEXT_MODEL = "llama-3.3-70b-versatile"
+VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+AUDIO_MODEL = "whisper-large-v3-turbo"
 
 SYSTEM_PROMPT = {
     "role": "system",
@@ -86,7 +91,7 @@ def extract_text(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 def extract_audio(name: str, mime: str, data: bytes) -> str:
-    """Transcribe audio using OpenAI Whisper."""
+    """Transcribe audio using Groq's hosted Whisper model."""
     try:
         ext = name.lower().rsplit(".", 1)[-1] if "." in name else "mp3"
         # Whisper accepts: mp3, mp4, mpeg, mpga, m4a, wav, webm, ogg
@@ -98,7 +103,7 @@ def extract_audio(name: str, mime: str, data: bytes) -> str:
             tmp_path = tmp.name
         with open(tmp_path, "rb") as f:
             transcript = client.audio.transcriptions.create(
-                model="whisper-1",
+                model=AUDIO_MODEL,
                 file=f,
             )
         os.unlink(tmp_path)
@@ -138,6 +143,7 @@ def extract_file(name: str, mime: str, data: bytes) -> str:
 def chat(request: ChatRequest):
     try:
         messages = [SYSTEM_PROMPT] + [m.dict() for m in request.messages]
+        model = TEXT_MODEL
 
         if request.files:
             file_sections = []
@@ -169,6 +175,7 @@ def chat(request: ChatRequest):
 
             # Handle images via vision (multimodal content)
             if image_files:
+                model = VISION_MODEL
                 last = messages[-1] if messages else None
                 text_part = (last["content"] if last and last["role"] == "user" else "") or "Analyse this image."
                 # Remove last user message — we'll rebuild it as multimodal
@@ -183,7 +190,7 @@ def chat(request: ChatRequest):
                 messages.append({"role": "user", "content": content})
 
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model=model,
             temperature=0.7,
             messages=messages
         )
